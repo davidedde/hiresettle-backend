@@ -1,0 +1,190 @@
+// prisma/schema.prisma
+// HireSettle — Database schema
+// Run: npx prisma migrate dev --name init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS — mirror the on-chain contract enums
+// ============================================================
+
+enum EngagementStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  REPLACEMENT_REQUESTED
+}
+
+enum MilestoneStatus {
+  LOCKED
+  PENDING
+  PROOF_SUBMITTED
+  CONFIRMED
+  DISPUTED
+  RESOLVED
+}
+
+enum MilestoneKind {
+  PLACEMENT
+  RETENTION
+}
+
+enum NotificationType {
+  ENGAGEMENT_CREATED
+  MILESTONE_UNLOCKED
+  PROOF_SUBMITTED
+  MILESTONE_CONFIRMED
+  DISPUTE_RAISED
+  DISPUTE_RESOLVED
+  REPLACEMENT_REQUESTED
+  ENGAGEMENT_CANCELLED
+  PAYMENT_RELEASED
+  RETENTION_WINDOW_APPROACHING  // sent 3 days before unlock
+}
+
+enum UserRole {
+  COMPANY
+  RECRUITER
+  ARBITER
+  ADMIN
+}
+
+// ============================================================
+// MODELS
+// ============================================================
+
+model User {
+  id             String    @id @default(uuid())
+  stellarAddress String    @unique
+  email          String?   @unique
+  name           String?
+  company        String?   // company name (for COMPANY role users)
+  role           UserRole  @default(COMPANY)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  companyEngagements   Engagement[]   @relation("CompanyEngagements")
+  recruiterEngagements Engagement[]   @relation("RecruiterEngagements")
+  arbiterEngagements   Engagement[]   @relation("ArbiterEngagements")
+  notifications        Notification[]
+
+  @@map("users")
+}
+
+model Engagement {
+  id               String            @id     // matches on-chain engagement_id
+  companyAddress   String
+  recruiterAddress String
+  arbiterAddress   String
+  tokenAddress     String
+  totalAmount      BigInt            // total fee in stroops
+  releasedAmount   BigInt            @default(0)
+  jobTitle         String
+  jobDescription   String?           // off-chain — not stored on-chain
+  salaryRange      String?           // off-chain metadata
+  location         String?           // off-chain metadata
+  status           EngagementStatus  @default(ACTIVE)
+  txHash           String?           // on-chain creation tx hash
+  createdLedger    Int?              // ledger sequence at creation
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  // Relations
+  company    User         @relation("CompanyEngagements",   fields: [companyAddress],   references: [stellarAddress])
+  recruiter  User         @relation("RecruiterEngagements", fields: [recruiterAddress], references: [stellarAddress])
+  arbiter    User         @relation("ArbiterEngagements",   fields: [arbiterAddress],   references: [stellarAddress])
+  milestones Milestone[]
+  events     ChainEvent[]
+
+  @@map("engagements")
+}
+
+model Milestone {
+  id               String          @id @default(uuid())
+  engagementId     String
+  milestoneIndex   Int             // 0-based index matching on-chain
+  name             String
+  kind             MilestoneKind
+  paymentPercent   Int             // 0-100
+  retentionDays    Int?            // original retention window in days (for display)
+  validAfterLedger Int?            // on-chain valid_after_ledger value
+  unlockEstimatedAt DateTime?      // estimated real-world datetime of unlock
+  proofHash        String?
+  status           MilestoneStatus @default(PENDING)
+  paymentReleased  BigInt?
+  confirmedAt      DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  // Relations
+  engagement Engagement @relation(fields: [engagementId], references: [id])
+
+  @@unique([engagementId, milestoneIndex])
+  @@map("milestones")
+}
+
+model ChainEvent {
+  id           String   @id @default(uuid())
+  engagementId String?
+  eventName    String   // e.g. "engagement_created", "milestone_confirmed"
+  ledger       Int
+  txHash       String
+  payload      Json
+  processed    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  // Relations
+  engagement Engagement? @relation(fields: [engagementId], references: [id])
+
+  @@index([engagementId])
+  @@index([eventName])
+  @@index([processed])
+  @@map("chain_events")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  read      Boolean          @default(false)
+  emailSent Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([read])
+  @@map("notifications")
+}
+
+// Tracks retention milestones that need to be unlocked.
+// The RetentionSchedulerService queries this table every hour.
+model RetentionSchedule {
+  id               String   @id @default(uuid())
+  engagementId     String
+  milestoneIndex   Int
+  validAfterLedger Int      // on-chain ledger to unlock at
+  unlockAt         DateTime // estimated wall-clock time (for cron scheduling)
+  notifyAt         DateTime // 3 days before unlock (send "approaching" notification)
+  unlocked         Boolean  @default(false)
+  notified         Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@unique([engagementId, milestoneIndex])
+  @@index([unlockAt])
+  @@index([notifyAt])
+  @@index([unlocked])
+  @@map("retention_schedules")
+}
