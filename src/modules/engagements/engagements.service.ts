@@ -5,8 +5,9 @@ import { User } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
 import { CreateEngagementDto } from './dto/create-engagement.dto';
-import { EngagementStatus, MilestoneKind, MilestoneStatus, NotificationType } from '@prisma/client';
+import { EngagementStatus, MilestoneKind, MilestoneStatus, NotificationType, UserRole } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditLogService } from './audit-log.service';
 
 @Injectable()
 export class EngagementsService {
@@ -16,6 +17,7 @@ export class EngagementsService {
     private readonly prisma: PrismaService,
     private readonly stellar: StellarService,
     private readonly notifications: NotificationsService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   // ----------------------------------------------------------
@@ -265,6 +267,39 @@ export class EngagementsService {
   }
 
   // ----------------------------------------------------------
+  // STATUS MANAGEMENT
+  // ----------------------------------------------------------
+
+  async updateStatus(
+    engagementId: string,
+    newStatus: EngagementStatus,
+    requestingUserId: string,
+    reason?: string,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.engagement.findUniqueOrThrow({
+        where: { id: engagementId },
+        select: { status: true },
+      });
+
+      const updated = await tx.engagement.update({
+        where: { id: engagementId },
+        data: { status: newStatus },
+      });
+
+      await this.auditLog.record(tx, {
+        engagementId,
+        fromStatus: current.status,
+        toStatus: newStatus,
+        changedBy: requestingUserId,
+        reason,
+      });
+
+      return updated;
+    });
+  }
+
+  // ----------------------------------------------------------
   // HELPERS
   // ----------------------------------------------------------
 
@@ -285,7 +320,7 @@ export class EngagementsService {
     });
 
     for (const admin of admins) {
-      await this.notificationsService.notifyUserById(
+      await this.notifications.notifyUserById(
         admin.id,
         'ARBITER_RECUSAL_REQUESTED',
         'Arbiter Recusal Requested',
@@ -335,16 +370,12 @@ export class EngagementsService {
         data: { status: newStatus },
       });
 
-      await tx.auditLog.create({
-        data: {
-          entityType: 'Engagement',
-          entityId: engagementId,
-          action: 'STATUS_OVERRIDE',
-          oldValue: oldStatus,
-          newValue: newStatus,
-          reason,
-          changedBy: adminId,
-        },
+      await this.auditLog.record(tx, {
+        engagementId,
+        fromStatus: oldStatus,
+        toStatus: newStatus,
+        changedBy: adminId,
+        reason,
       });
 
       // Notify all parties involved in the engagement

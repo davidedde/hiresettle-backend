@@ -1,22 +1,25 @@
 import {
   Controller, Get, Post, Body, Param,
   Query, UseGuards, HttpCode, HttpStatus,
+  Patch,
 } from '@nestjs/common';
 import {
   ApiTags, ApiOperation, ApiResponse,
   ApiBearerAuth, ApiQuery, ApiParam,
 } from '@nestjs/swagger';
+import { User, UserRole } from '@prisma/client';
+import { Throttle } from '@nestjs/throttler';
 import { EngagementsService } from './engagements.service';
 import { CreateEngagementDto } from './dto/create-engagement.dto';
+import { UpdateEngagementStatusDto } from './dto/update-engagement-status.dto';
+import { AuditLogService } from './audit-log.service';
+import { AuditLogEntryDto } from './dto/audit-log-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole } from '@prisma/client';
-import { Throttle } from '@nestjs/throttler';
 import { UserJwtSubThrottlerGuard } from '../../common/guards/user-jwt-sub-throttler.guard';
 import { AdminUsersService } from '../admin/admin-users.service';
-import { UpdateEngagementStatusDto } from './dto/update-engagement-status.dto';
 
 @ApiTags('engagements')
 @ApiBearerAuth()
@@ -28,7 +31,8 @@ export class EngagementsController {
   constructor(
     private readonly engagementsService: EngagementsService,
     private readonly adminUsersService: AdminUsersService,
-  ) { }
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   @Post()
   @UseGuards(RolesGuard)
@@ -40,8 +44,6 @@ export class EngagementsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 422, description: 'Validation failed' })
-  create(@Body() dto: CreateEngagementDto) {
-    return this.engagementsService.create(dto);
   create(
     @CurrentUser() user: User,
     @Body() dto: CreateEngagementDto,
@@ -102,6 +104,23 @@ export class EngagementsController {
   }
 
   /**
+   * GET /api/v1/engagements/:id/audit-log
+   * Returns the full status transition history for an engagement.
+   */
+  @Get(':id/audit-log')
+  @ApiOperation({ summary: 'Get engagement audit log' })
+  @ApiParam({ name: 'id', description: 'Engagement ID' })
+  @ApiResponse({ status: 200, description: 'Audit log retrieved' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Engagement not found' })
+  getAuditLog(
+    @Param('id') engagementId: string,
+    @CurrentUser() user: { id: string; role: string },
+  ): Promise<AuditLogEntryDto[]> {
+    return this.auditLogService.findByEngagement(engagementId, user.id, user.role);
+  }
+
+  /**
    * POST /api/v1/engagements/:id/sync
    * Force re-read the engagement from the Stellar chain.
    */
@@ -134,6 +153,8 @@ export class EngagementsController {
   @ApiOperation({ summary: 'List all active arbiters (COMPANY and ADMIN only)' })
   listArbiters() {
     return this.adminUsersService.listArbiters();
+  }
+
   @Patch(':id/status')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
