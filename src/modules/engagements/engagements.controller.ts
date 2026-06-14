@@ -18,6 +18,8 @@ import { Throttle } from '@nestjs/throttler';
 import { UserJwtSubThrottlerGuard } from '../../common/guards/user-jwt-sub-throttler.guard';
 import { AdminUsersService } from '../admin/admin-users.service';
 import { UpdateEngagementStatusDto } from './dto/update-engagement-status.dto';
+import { CancelEngagementDto } from './dto/cancel-engagement.dto';
+import { RequestReplacementDto } from './dto/request-replacement.dto';
 
 @ApiTags('engagements')
 @ApiBearerAuth()
