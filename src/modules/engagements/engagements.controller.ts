@@ -9,8 +9,10 @@ import {
 import { EngagementsService } from './engagements.service';
 import { CreateEngagementDto } from './dto/create-engagement.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { EngagementStatus } from '@prisma/client';
+import { EngagementStatus, UserRole } from '@prisma/client';
 
 @ApiTags('engagements')
 @ApiBearerAuth()
@@ -19,14 +21,11 @@ import { EngagementStatus } from '@prisma/client';
 export class EngagementsController {
   constructor(private readonly engagementsService: EngagementsService) {}
 
-  /**
-   * POST /api/v1/engagements
-   * Called by the frontend after the company has signed and broadcast
-   * the create_engagement tx via Freighter.
-   */
   @Post()
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.COMPANY)
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Register a newly created on-chain engagement' })
+  @ApiOperation({ summary: 'Create engagement with on-chain escrow (COMPANY only)' })
   create(@Body() dto: CreateEngagementDto) {
     return this.engagementsService.create(dto);
   }
