@@ -3,6 +3,8 @@ import { Controller, Post, Get, Patch, Body, Query, HttpCode, HttpStatus, UseGua
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RateLimit } from '../../common/decorators/throttle.decorator';
 
 @ApiTags('auth')
@@ -49,6 +51,20 @@ export class AuthController {
   async updateMe(@Request() req: any, @Body() dto: UpdateProfileDto) {
     // req.user.id comes from the JwtAuthGuard context session injection
     return this.authService.updateProfile(req.user.id, dto);
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Rotate a refresh token and receive a new JWT pair' })
+  refresh(@Body() dto: RefreshTokenDto) {
+    return this.authService.refresh(dto.refreshToken);
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke a refresh token' })
+  logout(@Body() dto: RefreshTokenDto) {
+    return this.authService.logout(dto.refreshToken);
   }
 }
 

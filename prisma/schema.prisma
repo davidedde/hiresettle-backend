@@ -61,9 +61,10 @@ enum UserRole {
 // ============================================================
 
 model User {
-  id             String         @id @default(uuid())
-  stellarAddress String         @unique
-  email          String?        @unique
+  id             String    @id @default(uuid())
+  stellarAddress String?   @unique
+  email          String?   @unique
+  passwordHash   String?
   name           String?
   company        String?        // company name (for COMPANY role users)
   role           UserRole       @default(COMPANY)
@@ -72,25 +73,32 @@ model User {
   updatedAt      DateTime       @updatedAt
 
   // Relations
-  companyEngagements      Engagement[]             @relation("CompanyEngagements")
-  recruiterEngagements    Engagement[]             @relation("RecruiterEngagements")
-  arbiterEngagements      Engagement[]             @relation("ArbiterEngagements")
-  notifications           Notification[]
-  notificationPreferences NotificationPreference[]
+  companyEngagements   Engagement[]   @relation("CompanyEngagements")
+  recruiterEngagements Engagement[]   @relation("RecruiterEngagements")
+  arbiterEngagements   Engagement[]   @relation("ArbiterEngagements")
+  notifications        Notification[]
+  refreshTokens        RefreshToken[]
 
   @@map("users")
 }
 
-model NotificationPreference {
-  id           String           @id @default(uuid())
-  userId       String
-  type         NotificationType
-  emailEnabled Boolean          @default(true)
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  familyId   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
 
-  user User @relation(fields: [userId], references: [id])
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, type])
-  @@map("notification_preferences")
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
 }
 
 model Engagement {
