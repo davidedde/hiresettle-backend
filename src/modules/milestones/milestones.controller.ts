@@ -11,6 +11,7 @@ import { Throttle } from '@nestjs/throttler';
 import { UserJwtSubThrottlerGuard } from '../../common/guards/user-jwt-sub-throttler.guard';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+import { UpdateMilestoneStatusDto } from './dto/update-milestone-status.dto';
 
 @ApiTags('milestones')
 @ApiBearerAuth()
@@ -59,36 +60,22 @@ export class MilestonesController {
     return this.milestonesService.resolveDisputeFlow(engagementId, index, dto.resolution);
   }
 
-  @Post(':index/dispute-evidence')
-  @ApiOperation({ summary: 'Upload dispute evidence file' })
-  @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
-  async uploadEvidence(
+  @Patch(':index/status')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Admin override: Force update milestone status' })
+  updateMilestoneStatus(
     @Param('engagementId') engagementId: string,
     @Param('index', ParseIntPipe) index: number,
-    @CurrentUser() user: any,
-    @UploadedFile() file: Express.Multer.File,
+    @Body() dto: UpdateMilestoneStatusDto,
+    @CurrentUser('id') adminId: string,
   ) {
-    return this.milestonesService.uploadDisputeEvidence(
+    return this.milestonesService.updateMilestoneStatusByAdmin(
       engagementId,
       index,
-      user.id,
-      file,
-    );
-  }
-
-  @Get(':index/dispute-evidence')
-  @ApiOperation({ summary: 'List dispute evidence files' })
-  async listEvidence(
-    @Param('engagementId') engagementId: string,
-    @Param('index', ParseIntPipe) index: number,
-    @CurrentUser() user: any,
-  ) {
-    return this.milestonesService.listDisputeEvidence(
-      engagementId,
-      index,
-      user.id,
-      user.role,
+      dto.status,
+      dto.reason,
+      adminId,
     );
   }
 }

@@ -17,6 +17,7 @@ import { EngagementStatus } from '@prisma/client';
 import { Throttle } from '@nestjs/throttler';
 import { UserJwtSubThrottlerGuard } from '../../common/guards/user-jwt-sub-throttler.guard';
 import { AdminUsersService } from '../admin/admin-users.service';
+import { UpdateEngagementStatusDto } from './dto/update-engagement-status.dto';
 
 @ApiTags('engagements')
 @ApiBearerAuth()
@@ -118,5 +119,15 @@ export class EngagementsController {
   @ApiOperation({ summary: 'List all active arbiters (COMPANY and ADMIN only)' })
   listArbiters() {
     return this.adminUsersService.listArbiters();
+  @Patch(':id/status')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Admin override: Force update engagement status' })
+  updateEngagementStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateEngagementStatusDto,
+    @CurrentUser('id') adminId: string,
+  ) {
+    return this.engagementsService.updateEngagementStatusByAdmin(id, dto.status, dto.reason, adminId);
   }
 }
