@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { NotificationType } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
+import { PublicUserDto } from './dto/public-user.dto';
 
 @Injectable()
 export class UsersService {
@@ -17,6 +18,15 @@ export class UsersService {
       const pref = saved.find((p) => p.type === type);
       return { type, emailEnabled: pref ? pref.emailEnabled : true };
     });
+  }
+
+  async findByStellarAddress(stellarAddress: string): Promise<PublicUserDto> {
+    const user = await this.prisma.user.findUnique({
+      where: { stellarAddress },
+      select: { name: true, company: true, role: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return user;
   }
 
   async updatePreferences(userId: string, dto: UpdatePreferencesDto) {
