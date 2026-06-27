@@ -2,12 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { NotificationType } from '@prisma/client';
+import { NotificationType, Notification } from '@prisma/client';
 
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
   private transporter: nodemailer.Transporter;
+  private userConnections: Map<string, any[]> = new Map();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -22,6 +23,48 @@ export class NotificationsService {
         pass: this.config.get('SMTP_PASS'),
       },
     });
+  }
+
+  addConnection(userId: string, res: any) {
+    if (!this.userConnections.has(userId)) {
+      this.userConnections.set(userId, []);
+    }
+    this.userConnections.get(userId)!.push(res);
+    
+    res.on('close', () => {
+      const connections = this.userConnections.get(userId);
+      if (connections) {
+        const index = connections.indexOf(res);
+        if (index > -1) {
+          connections.splice(index, 1);
+        }
+        if (connections.length === 0) {
+          this.userConnections.delete(userId);
+        }
+      }
+    });
+  }
+
+  removeConnection(userId: string, res: any) {
+    const connections = this.userConnections.get(userId);
+    if (connections) {
+      const index = connections.indexOf(res);
+      if (index > -1) {
+        connections.splice(index, 1);
+      }
+      if (connections.length === 0) {
+        this.userConnections.delete(userId);
+      }
+    }
+  }
+
+  private pushToConnections(notification: Notification) {
+    const connections = this.userConnections.get(notification.userId);
+    if (connections) {
+      connections.forEach(res => {
+        res.write(`data: ${JSON.stringify(notification)}\n\n`);
+      });
+    }
   }
 
   async notifyUser(
@@ -41,6 +84,8 @@ export class NotificationsService {
       const notification = await this.prisma.notification.create({
         data: { userId: user.id, type, title, message, data: data ?? {} },
       });
+
+      this.pushToConnections(notification);
 
       if (user.email) {
         const pref = await this.prisma.notificationPreference.findUnique({
@@ -67,7 +112,7 @@ export class NotificationsService {
     const where: any = { userId };
     if (unreadOnly) where.read = false;
 
-    const [notifications, total] = await this.prisma.$transaction([
+    const [notifications, total, unreadCount] = await this.prisma.$transaction([
       this.prisma.notification.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -75,9 +120,14 @@ export class NotificationsService {
         take: limit,
       }),
       this.prisma.notification.count({ where }),
+      this.prisma.notification.count({ where: { userId, read: false } }),
     ]);
 
-    return { data: notifications, meta: { total, page, limit } };
+    return { data: notifications, meta: { total, page, limit, unreadCount } };
+  }
+
+  async getUnreadCount(userId: string) {
+    return { unreadCount: await this.prisma.notification.count({ where: { userId, read: false } }) };
   }
 
   async markRead(notificationId: string, userId: string) {
