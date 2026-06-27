@@ -1,13 +1,16 @@
-import { Controller, Get, Param, ParseIntPipe, UseGuards, Patch, UnprocessableEntityException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { Controller, Get, Param, ParseIntPipe, UseGuards, Patch, UnprocessableEntityException, Post, UseInterceptors, UploadedFile, ForbiddenException, Body } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
 import { MilestonesService } from './milestones.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
 import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
 import { Throttle } from '@nestjs/throttler';
 import { UserJwtSubThrottlerGuard } from '../../common/guards/user-jwt-sub-throttler.guard';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 
 @ApiTags('milestones')
 @ApiBearerAuth()
@@ -51,10 +54,41 @@ export class MilestonesController {
     @Param('engagementId') engagementId: string,
     @Param('index', ParseIntPipe) index: number,
     @Body() dto: ResolveDisputeDto,
+    @CurrentUser() user: any,
   ) {
-    if (req.user.role !== UserRole.ARBITER) {
-      throw new ForbiddenException('Only assigned arbiters can resolve structural disputes.');
-    }
     return this.milestonesService.resolveDisputeFlow(engagementId, index, dto.resolution);
+  }
+
+  @Post(':index/dispute-evidence')
+  @ApiOperation({ summary: 'Upload dispute evidence file' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  async uploadEvidence(
+    @Param('engagementId') engagementId: string,
+    @Param('index', ParseIntPipe) index: number,
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.milestonesService.uploadDisputeEvidence(
+      engagementId,
+      index,
+      user.id,
+      file,
+    );
+  }
+
+  @Get(':index/dispute-evidence')
+  @ApiOperation({ summary: 'List dispute evidence files' })
+  async listEvidence(
+    @Param('engagementId') engagementId: string,
+    @Param('index', ParseIntPipe) index: number,
+    @CurrentUser() user: any,
+  ) {
+    return this.milestonesService.listDisputeEvidence(
+      engagementId,
+      index,
+      user.id,
+      user.role,
+    );
   }
 }

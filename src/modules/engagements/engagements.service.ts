@@ -1,10 +1,11 @@
 import {
-  Injectable, NotFoundException, ConflictException, BadRequestException, Logger,
+  Injectable, NotFoundException, ConflictException, BadRequestException, Logger, ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
 import { CreateEngagementDto } from './dto/create-engagement.dto';
-import { EngagementStatus, MilestoneKind, MilestoneStatus } from '@prisma/client';
+import { EngagementStatus, MilestoneKind, MilestoneStatus, UserRole } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class EngagementsService {
@@ -13,6 +14,7 @@ export class EngagementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stellar: StellarService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ----------------------------------------------------------
@@ -230,6 +232,35 @@ export class EngagementsService {
   // ----------------------------------------------------------
   // HELPERS
   // ----------------------------------------------------------
+
+  async recuseArbiter(engagementId: string, userId: string, userRole: UserRole) {
+    const engagement = await this.prisma.engagement.findUnique({
+      where: { id: engagementId },
+      include: { arbiter: true },
+    });
+    if (!engagement) throw new NotFoundException('Engagement not found');
+
+    if (userRole !== UserRole.ARBITER || !engagement.arbiter || engagement.arbiter.id !== userId) {
+      throw new ForbiddenException('Only the assigned arbiter can recuse themselves');
+    }
+
+    // Notify all admins
+    const admins = await this.prisma.user.findMany({
+      where: { role: UserRole.ADMIN, deactivatedAt: null },
+    });
+
+    for (const admin of admins) {
+      await this.notificationsService.notifyUserById(
+        admin.id,
+        'ARBITER_RECUSAL_REQUESTED',
+        'Arbiter Recusal Requested',
+        `Arbiter ${engagement.arbiter?.name} has recused themselves from engagement ${engagementId}. Please reassign.`,
+        { engagementId, arbiterId: userId },
+      );
+    }
+
+    return { message: 'Recusal request sent successfully' };
+  }
 
   private serialize(engagement: any) {
     return {

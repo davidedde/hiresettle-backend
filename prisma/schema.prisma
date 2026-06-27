@@ -46,7 +46,10 @@ enum NotificationType {
   REPLACEMENT_REQUESTED
   ENGAGEMENT_CANCELLED
   PAYMENT_RELEASED
-  RETENTION_WINDOW_APPROACHING  // sent 3 days before unlock
+  RETENTION_WINDOW_APPROACHING
+  ARBITER_ASSIGNED
+  ARBITER_REASSIGNED
+  ARBITER_RECUSAL_REQUESTED
 }
 
 enum UserRole {
@@ -226,4 +229,23 @@ model MilestoneAuditLog {
   @@index([milestoneId])
   @@index([changedBy])
   @@map("milestone_audit_logs")
+}
+
+model DisputeEvidence {
+  id          String    @id @default(uuid())
+  milestoneId String
+  uploadedBy  String
+  fileName    String
+  fileSize    Int       // in bytes
+  mimeType    String
+  s3Path      String    // path in S3 bucket
+  s3Url       String?   // presigned URL (optional, can be generated on the fly)
+  uploadedAt  DateTime  @default(now())
+
+  milestone   Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [uploadedBy], references: [id])
+
+  @@index([milestoneId])
+  @@index([uploadedBy])
+  @@map("dispute_evidence")
 }

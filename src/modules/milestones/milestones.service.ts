@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException, Logger, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, UnprocessableEntityException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
-import { MilestoneStatus } from '@prisma/client';
+import { S3Service } from '../../common/s3/s3.service';
+import { MilestoneStatus, UserRole } from '@prisma/client';
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class MilestonesService {
@@ -10,6 +12,7 @@ export class MilestonesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stellar: StellarService,
+    private readonly s3: S3Service,
   ) {}
 
   async findByEngagement(engagementId: string) {
@@ -359,5 +362,93 @@ export class MilestonesService {
         });
       }
     }
+  }
+
+  async uploadDisputeEvidence(
+    engagementId: string,
+    milestoneIndex: number,
+    userId: string,
+    file: Express.Multer.File,
+  ) {
+    const milestone = await this.findOne(engagementId, milestoneIndex);
+    if (milestone.status !== MilestoneStatus.DISPUTED) {
+      throw new UnprocessableEntityException('Evidence can only be uploaded for disputed milestones.');
+    }
+
+    // Validate file type
+    const allowedMimeTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      throw new UnprocessableEntityException('Only PDF, PNG, and JPEG files are allowed.');
+    }
+
+    // Validate file size (10 MB)
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      throw new UnprocessableEntityException('File size must be less than 10 MB.');
+    }
+
+    const s3Key = `dispute-evidence/${milestone.id}/${uuidv4()}-${file.originalname}`;
+    const s3Path = await this.s3.uploadFile(s3Key, file.buffer, file.mimetype);
+    const presignedUrl = await this.s3.getPresignedUrl(s3Path);
+
+    const evidence = await this.prisma.disputeEvidence.create({
+      data: {
+        milestoneId: milestone.id,
+        uploadedBy: userId,
+        fileName: file.originalname,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        s3Path,
+        s3Url: presignedUrl,
+      },
+    });
+
+    return evidence;
+  }
+
+  async listDisputeEvidence(
+    engagementId: string,
+    milestoneIndex: number,
+    userId: string,
+    userRole: UserRole,
+  ) {
+    const milestone = await this.findOne(engagementId, milestoneIndex);
+    const engagement = await this.prisma.engagement.findUnique({
+      where: { id: engagementId },
+      include: { company: true, recruiter: true, arbiter: true },
+    });
+
+    if (!engagement) {
+      throw new NotFoundException('Engagement not found');
+    }
+
+    // Check if user is a party or the arbiter (by User.id, since that's what's in the JWT)
+    const isParty =
+      engagement.company?.id === userId ||
+      engagement.recruiter?.id === userId ||
+      (userRole === UserRole.ARBITER && engagement.arbiter?.id === userId);
+
+    if (!isParty) {
+      throw new ForbiddenException('Only parties and the assigned arbiter can view dispute evidence.');
+    }
+
+    const evidenceList = await this.prisma.disputeEvidence.findMany({
+      where: { milestoneId: milestone.id },
+      orderBy: { uploadedAt: 'desc' },
+      include: { user: { select: { id: true, name: true, role: true } } },
+    });
+
+    // Generate presigned URLs for each file
+    const evidenceWithUrls = await Promise.all(
+      evidenceList.map(async (evidence) => {
+        const url = await this.s3.getPresignedUrl(evidence.s3Path);
+        return {
+          ...evidence,
+          s3Url: url,
+        };
+      }),
+    );
+
+    return evidenceWithUrls;
   }
 }

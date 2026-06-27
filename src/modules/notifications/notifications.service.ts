@@ -81,15 +81,35 @@ export class NotificationsService {
         return;
       }
 
+      return this.notifyUserById(user.id, type, title, message, data);
+    } catch (error) {
+      this.logger.error(`Failed to notify ${stellarAddress}`, error.message);
+    }
+  }
+
+  async notifyUserById(
+    userId: string,
+    type: NotificationType,
+    title: string,
+    message: string,
+    data?: Record<string, any>,
+  ) {
+    try {
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user) {
+        this.logger.warn(`No user found for id ${userId} — skipping notification`);
+        return;
+      }
+
       const notification = await this.prisma.notification.create({
-        data: { userId: user.id, type, title, message, data: data ?? {} },
+        data: { userId, type, title, message, data: data ?? {} },
       });
 
       this.pushToConnections(notification);
 
       if (user.email) {
         const pref = await this.prisma.notificationPreference.findUnique({
-          where: { userId_type: { userId: user.id, type } },
+          where: { userId_type: { userId, type } },
         });
         const emailEnabled = pref ? pref.emailEnabled : true;
 
@@ -104,7 +124,7 @@ export class NotificationsService {
 
       return notification;
     } catch (error) {
-      this.logger.error(`Failed to notify ${stellarAddress}`, error.message);
+      this.logger.error(`Failed to notify user ${userId}`, error.message);
     }
   }
 

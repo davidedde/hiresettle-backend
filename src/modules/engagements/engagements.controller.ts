@@ -16,6 +16,7 @@ import { UserRole } from '@prisma/client';
 import { EngagementStatus } from '@prisma/client';
 import { Throttle } from '@nestjs/throttler';
 import { UserJwtSubThrottlerGuard } from '../../common/guards/user-jwt-sub-throttler.guard';
+import { AdminUsersService } from '../admin/admin-users.service';
 
 @ApiTags('engagements')
 @ApiBearerAuth()
@@ -24,7 +25,10 @@ import { UserJwtSubThrottlerGuard } from '../../common/guards/user-jwt-sub-throt
 @Throttle({ limit: 100, ttl: 60 })
 @Controller('engagements')
 export class EngagementsController {
-  constructor(private readonly engagementsService: EngagementsService) { }
+  constructor(
+    private readonly engagementsService: EngagementsService,
+    private readonly adminUsersService: AdminUsersService,
+  ) { }
 
   @Post()
   @UseGuards(RolesGuard)
@@ -94,5 +98,25 @@ export class EngagementsController {
   @ApiOperation({ summary: 'Force sync engagement status from Stellar chain' })
   sync(@Param('id') id: string) {
     return this.engagementsService.syncFromChain(id);
+  }
+
+  @Post(':id/recuse-arbiter')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ARBITER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Recuse yourself as arbiter from an engagement (ARBITER only)' })
+  recuseArbiter(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.engagementsService.recuseArbiter(id, user.id, user.role);
+  }
+
+  @Get('arbiters')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.COMPANY, UserRole.ADMIN)
+  @ApiOperation({ summary: 'List all active arbiters (COMPANY and ADMIN only)' })
+  listArbiters() {
+    return this.adminUsersService.listArbiters();
   }
 }
