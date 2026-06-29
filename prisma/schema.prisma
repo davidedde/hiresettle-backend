@@ -83,6 +83,7 @@ model User {
   arbiterEngagements   Engagement[]   @relation("ArbiterEngagements")
   notifications        Notification[]
   refreshTokens        RefreshToken[]
+  auditLogs            EngagementAuditLog[]
 
   @@map("users")
 }
@@ -131,8 +132,25 @@ model Engagement {
   arbiter    User         @relation("ArbiterEngagements",   fields: [arbiterAddress],   references: [stellarAddress])
   milestones Milestone[]
   events     ChainEvent[]
+  auditLogs  EngagementAuditLog[]
 
   @@map("engagements")
+}
+
+model EngagementAuditLog {
+  id           String   @id @default(cuid())
+  engagementId String
+  fromStatus   String
+  toStatus     String
+  changedBy    String
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  engagement   Engagement @relation(fields: [engagementId], references: [id])
+  changedByUser User       @relation(fields: [changedBy], references: [id])
+
+  @@index([engagementId])
+  @@index([changedBy])
 }
 
 model Milestone {

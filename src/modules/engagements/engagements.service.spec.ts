@@ -3,6 +3,7 @@ import { EngagementsService } from './engagements.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StellarService } from '../../common/stellar/stellar.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditLogService } from './audit-log.service';
 import {
   ConflictException,
   NotFoundException,
@@ -17,6 +18,7 @@ import { EngagementStatus, NotificationType, UserRole } from '@prisma/client';
 const makeMockPrisma = () => ({
   engagement: {
     findUnique: jest.fn(),
+    findUniqueOrThrow: jest.fn(),
     create: jest.fn(),
     findMany: jest.fn(),
     count: jest.fn(),
@@ -45,6 +47,10 @@ const mockStellar = {
 const mockNotifications = {
   notifyUser: jest.fn().mockResolvedValue(undefined),
   notifyUserById: jest.fn().mockResolvedValue(undefined),
+};
+
+const mockAuditLog = {
+  record: jest.fn().mockResolvedValue({}),
 };
 
 const baseUser = { id: 'user-1', role: 'COMPANY' } as any;
@@ -94,6 +100,7 @@ describe('EngagementsService', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: StellarService, useValue: mockStellar },
         { provide: NotificationsService, useValue: mockNotifications },
+        { provide: AuditLogService, useValue: mockAuditLog },
       ],
     }).compile();
 
@@ -171,6 +178,36 @@ describe('EngagementsService', () => {
     });
   });
 
+  describe('updateStatus()', () => {
+    it('records an audit log entry when an engagement status changes', async () => {
+      mockPrisma.$transaction.mockImplementation(async (fn) => {
+        const tx = {
+          engagement: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue({ status: EngagementStatus.ACTIVE }),
+            update: jest.fn().mockResolvedValue({ id: 'ENG-001', status: EngagementStatus.CANCELLED }),
+          },
+          engagementAuditLog: {
+            create: jest.fn().mockResolvedValue({}),
+          },
+        };
+        return fn(tx);
+      });
+
+      await service.updateStatus('ENG-001', EngagementStatus.CANCELLED, 'user-1', 'Fraud detected');
+
+      expect(mockAuditLog.record).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          engagementId: 'ENG-001',
+          fromStatus: EngagementStatus.ACTIVE,
+          toStatus: EngagementStatus.CANCELLED,
+          changedBy: 'user-1',
+          reason: 'Fraud detected',
+        }),
+      );
+    });
+  });
+
   // ----------------------------------------------------------
   // cancel (updateEngagementStatusByAdmin → CANCELLED)
   // ----------------------------------------------------------
@@ -191,7 +228,6 @@ describe('EngagementsService', () => {
     it('transitions engagement to CANCELLED and writes audit log', async () => {
       mockPrisma.engagement.findUnique.mockResolvedValue(engagementRecord);
       mockPrisma.engagement.update.mockResolvedValue({ ...engagementRecord, status: EngagementStatus.CANCELLED });
-      mockPrisma.auditLog = { create: jest.fn().mockResolvedValue({}) } as any;
 
       const result = await service.updateEngagementStatusByAdmin(
         'ENG-001',
@@ -199,8 +235,14 @@ describe('EngagementsService', () => {
         'Fraud detected',
         'admin-1',
       );
-      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ action: 'STATUS_OVERRIDE', newValue: EngagementStatus.CANCELLED }) }),
+      expect(mockAuditLog.record).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          engagementId: 'ENG-001',
+          fromStatus: EngagementStatus.ACTIVE,
+          toStatus: EngagementStatus.CANCELLED,
+          changedBy: 'admin-1',
+        }),
       );
       expect(result).toBeDefined();
     });
@@ -232,7 +274,6 @@ describe('EngagementsService', () => {
       };
       mockPrisma.engagement.findUnique.mockResolvedValue(eng);
       mockPrisma.engagement.update.mockResolvedValue({ ...eng, status: EngagementStatus.REPLACEMENT_REQUESTED });
-      mockPrisma.auditLog = { create: jest.fn().mockResolvedValue({}) } as any;
 
       const result = await service.updateEngagementStatusByAdmin(
         'ENG-002',
